@@ -87,6 +87,6 @@ spec:
               volumes:
                 - name: torchtitan-data
                   persistentVolumeClaim:
-                    # Replace with a shared or pre-provisioned claim for
-                    # tokenizer assets, datasets, and checkpoints.
-                    claimName: torchtitan-data
+                    # See k8s/torchtitan-oke-fss-pvc.yaml for an OKE-friendly
+                    # RWX example claim backed by File Storage Service.
+                    claimName: torchtitan-oke-fss

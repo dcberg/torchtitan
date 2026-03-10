@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: torchtitan-oke-fss
+spec:
+  # For multi-node TorchTitan, use an OKE File Storage Service CSI
+  # StorageClass that supports RWX, for example a class backed by the
+  # fss.csi.oraclecloud.com provisioner.
+  storageClassName: fss-dyn-storage
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi

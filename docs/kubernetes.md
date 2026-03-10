@@ -10,6 +10,7 @@ The example manifests are in:
 
 - `k8s/kueue-localqueue.yaml`
 - `k8s/torchtitan-kueue-jobset.yaml`
+- `k8s/torchtitan-oke-fss-pvc.yaml`
 
 ## Why JobSet instead of StatefulSet
 
@@ -23,6 +24,7 @@ The example manifests are in:
 - GPU nodes with working NCCL pod-to-pod connectivity.
 - A container image that can run `torchrun -m torchtitan.train`.
 - Shared or pre-staged storage for tokenizer assets, datasets, and checkpoints.
+- An OKE File Storage Service CSI `StorageClass` for the shared PVC, such as a class backed by `fss.csi.oraclecloud.com`.
 
 ## Queue setup
 
@@ -34,6 +36,22 @@ spec:
 ```
 
 Replace `gpu-batch` with the queue your cluster admin provides.
+
+## Shared storage on OKE
+
+The sample JobSet mounts one shared claim across all worker pods. For multi-node training on OKE, that means the claim should be `ReadWriteMany` rather than a block-volume `ReadWriteOnce` claim.
+
+The repository now includes an OKE-oriented PVC example:
+
+- `k8s/torchtitan-oke-fss-pvc.yaml`
+
+It expects an existing OKE File Storage Service CSI `StorageClass` and defaults to:
+
+- `storageClassName: fss-dyn-storage`
+- `accessModes: [ReadWriteMany]`
+- `storage: 50Gi`
+
+If your cluster uses a different FSS-backed storage class name, change `storageClassName` in the PVC manifest before applying it.
 
 ## Launch model
 
@@ -75,12 +93,14 @@ Adjust these fields before submitting:
 - `MODULE`
 - `CONFIG`
 - PVC name in `claimName`
+- OKE FSS storage class name in `k8s/torchtitan-oke-fss-pvc.yaml`
 - CPU and memory requests
 
 Then apply:
 
 ```bash
 kubectl apply -f k8s/kueue-localqueue.yaml
+kubectl apply -f k8s/torchtitan-oke-fss-pvc.yaml
 kubectl apply -f k8s/torchtitan-kueue-jobset.yaml
 ```
 
@@ -88,6 +108,7 @@ kubectl apply -f k8s/torchtitan-kueue-jobset.yaml
 
 - Keep `replicas` and `NNODES` in sync.
 - Keep `resources.limits["nvidia.com/gpu"]` and `NPROC_PER_NODE` in sync.
-- Avoid downloading Hugging Face assets independently in every pod; stage them on the image or a shared volume.
+- Avoid downloading Hugging Face assets independently in every pod; stage them on the image or the shared FSS volume.
+- Do not replace the shared FSS claim with a single `oci-bv` block-volume PVC unless you also redesign the workload so each pod gets its own claim.
 - If you need retries, increase `failurePolicy.maxRestarts` and make sure checkpointing is configured.
 - If you need topology-aware placement, add the relevant Kueue podset topology annotations to the pod template.
