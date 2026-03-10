@@ -162,6 +162,8 @@ srun torchrun --nnodes 2
 
 If your gpu count per node is not 8, adjust `--nproc_per_node` in the torchrun command and `#SBATCH --gpus-per-task` in the SBATCH command section.
 
+For Kubernetes batch scheduling, see [docs/kubernetes.md](docs/kubernetes.md) and the example manifests in [`k8s/`](k8s/). The Kubernetes example uses Kueue plus JobSet rather than a `StatefulSet`.
+
 
 ## Citation
 

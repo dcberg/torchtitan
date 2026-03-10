@@ -1,0 +1,7 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: torchtitan
+spec:
+  # Replace with the ClusterQueue exposed to your namespace by the cluster admin.
+  clusterQueue: gpu-batch
