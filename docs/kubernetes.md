@@ -9,19 +9,23 @@ TorchTitan does not include a Kubernetes-native launcher. The recommended batch 
 The example manifests are in:
 
 - `k8s/kueue-localqueue.yaml`
+- `k8s/torchtitan-kueue-jobset.yaml`
 - `k8s/torchtitan-kueue-mpijob.yaml`
 - `k8s/torchtitan-oke-fss-pvc.yaml`
 
 A PHX-specific example for the `gpu-a10-2` OKE node pool is documented in `docs/kubernetes-phx-a10.md` with manifests in `k8s/phx-a10/`.
 
-That PHX directory now contains two distinct paths:
+That PHX directory now contains separate validated smoke-test manifests plus separate larger-GPU templates:
 
+- `torchtitan-jobset.yaml`: torchrun-on-JobSet smoke test for the A10 pool
 - `torchtitan-mpijob.yaml`: smoke-test MPIJob for the A10 pool
+- `torchtitan-jobset-llama3-8b.yaml`: suspended JobSet template for a larger GPU pool
 - `torchtitan-mpijob-llama3-8b.yaml`: suspended template for a larger GPU pool
 
-## Why MPIJob instead of StatefulSet
+Both controller styles are intentionally kept in the repo:
 
-`StatefulSet` can be admitted by Kueue, but it is a serving-oriented controller. For multi-node TorchTitan runs that need a launcher plus worker replicas, `MPIJob` is a better fit because it models that pattern directly and provides the hostfile plus SSH wiring needed by `mpirun`.
+- `JobSet` is the simpler `torchrun` path when stable pod DNS is enough.
+- `MPIJob` is the launcher-plus-workers path when you specifically want MPI Operator semantics.
 
 ## Prerequisites
 
@@ -33,14 +37,20 @@ That PHX directory now contains two distinct paths:
 - Shared or pre-staged storage for tokenizer assets, datasets, and checkpoints.
 - An OKE File Storage Service CSI `StorageClass` for the shared PVC, such as a class backed by `fss.csi.oraclecloud.com`.
 
-## Install Kueue and MPI Operator
+## Install Kueue, JobSet, and MPI Operator
 
-If your cluster does not already have Kueue and MPI Operator, install them with Helm before applying the TorchTitan manifests:
+If your cluster does not already have Kueue, JobSet, and MPI Operator, install them before applying the TorchTitan manifests:
 
 ```bash
 helm install kueue oci://registry.k8s.io/kueue/charts/kueue \
   --version=0.16.1 \
   --namespace kueue-system \
+  --create-namespace \
+  --wait --timeout 300s
+
+helm install jobset oci://registry.k8s.io/jobset/charts/jobset \
+  --version=0.11.1 \
+  --namespace jobset-system \
   --create-namespace \
   --wait --timeout 300s
 
@@ -81,6 +91,29 @@ If your cluster uses a different FSS-backed storage class name, change `storageC
 
 ## Launch model
 
+The sample JobSet uses one trainer pod per node:
+
+- `replicatedJobs[0].replicas` = total node count
+- `NNODES` = total node count
+- `NPROC_PER_NODE` = GPUs per node
+
+JobSet gives each trainer pod a stable hostname. The sample command derives `NODE_RANK` from that hostname and uses rank 0 as the rendezvous endpoint:
+
+```bash
+NODE_RANK="$(echo "${HOSTNAME}" | awk -F- '{print $(NF-1)}')"
+MASTER_ADDR="${JOBSET_NAME}-trainer-0-0.${JOBSET_NAME}"
+
+torchrun \
+  --nnodes="${NNODES}" \
+  --nproc_per_node="${NPROC_PER_NODE}" \
+  --node_rank="${NODE_RANK}" \
+  --rdzv_backend=c10d \
+  --rdzv_endpoint="${MASTER_ADDR}:${MASTER_PORT}" \
+  -m torchtitan.train \
+  --module "${MODULE}" \
+  --config "${CONFIG}"
+```
+
 The sample MPIJob uses:
 
 - one `Launcher` replica that runs `mpirun`
@@ -114,15 +147,26 @@ The sample manifest also passes `--hostfile /etc/mpi/hostfile` explicitly so Ope
 Adjust these fields before submitting:
 
 - `image`
-- `Worker.replicas`
-- `slotsPerWorker`
 - `MODULE`
 - `CONFIG`
 - PVC name in `claimName`
 - OKE FSS storage class name in `k8s/torchtitan-oke-fss-pvc.yaml`
 - CPU and memory requests
 
-Then apply:
+For JobSet, also adjust:
+
+- `metadata.name` and `JOBSET_NAME` together
+- `replicatedJobs[0].replicas`
+- `NNODES`
+- `NPROC_PER_NODE`
+
+Then apply the controller path you want:
+
+```bash
+kubectl apply -f k8s/kueue-localqueue.yaml
+kubectl apply -f k8s/torchtitan-oke-fss-pvc.yaml
+kubectl apply -f k8s/torchtitan-kueue-jobset.yaml
+```
 
 ```bash
 kubectl apply -f k8s/kueue-localqueue.yaml
@@ -132,6 +176,9 @@ kubectl apply -f k8s/torchtitan-kueue-mpijob.yaml
 
 ## Operational notes
 
+- Keep `metadata.name`, `spec.network.subdomain`, and the JobSet `JOBSET_NAME` env aligned.
+- Keep `replicatedJobs[0].replicas` and `NNODES` aligned in the JobSet path.
+- Keep `NPROC_PER_NODE` and `resources.limits["nvidia.com/gpu"]` aligned in the JobSet path.
 - Keep `Worker.replicas` and the launcher `WORKER_REPLICAS` env in sync.
 - Keep `slotsPerWorker` and `resources.limits["nvidia.com/gpu"]` in sync.
 - If your Kueue flavor targets tainted GPU nodes, give the launcher the same GPU toleration as the workers even though it does not request GPUs itself.

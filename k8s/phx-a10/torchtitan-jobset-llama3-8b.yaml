@@ -1,0 +1,137 @@
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: torchtitan-llama3-8b-jobset
+  namespace: torchtitan-phx
+  labels:
+    # Replace this with the LocalQueue name for your larger-GPU pool.
+    kueue.x-k8s.io/queue-name: REPLACE_WITH_LOCAL_QUEUE
+spec:
+  # Keep this suspended until the queue, node selectors, and HF assets path are updated.
+  suspend: true
+  network:
+    enableDNSHostnames: true
+    subdomain: torchtitan-llama3-8b-jobset
+  failurePolicy:
+    maxRestarts: 0
+  successPolicy:
+    operator: All
+    targetReplicatedJobs:
+      - trainer
+  replicatedJobs:
+    - name: trainer
+      replicas: 1
+      template:
+        spec:
+          completions: 1
+          parallelism: 1
+          backoffLimit: 0
+          template:
+            metadata:
+              labels:
+                app: torchtitan
+                torchtitan/workload-class: full-8b
+                torchtitan/launcher: torchrun
+            spec:
+              restartPolicy: Never
+              priorityClassName: torchtitan-batch
+              nodeSelector:
+                # Replace these with a pool that has one node with 8 GPUs and materially more
+                # memory per GPU than VM.GPU.A10.2. This manifest is not intended for the PHX A10 pool.
+                oke.oraclecloud.com/pool.name: REPLACE_WITH_LARGE_GPU_POOL
+                node.kubernetes.io/instance-type: REPLACE_WITH_LARGE_GPU_SHAPE
+              tolerations:
+                - key: nvidia.com/gpu
+                  operator: Exists
+                  effect: NoSchedule
+              containers:
+                - name: trainer
+                  image: phx.ocir.io/odx-mockcustomer/torchtitan:0.0.3
+                  imagePullPolicy: IfNotPresent
+                  env:
+                    - name: JOBSET_NAME
+                      value: torchtitan-llama3-8b-jobset
+                    - name: MASTER_PORT
+                      value: "29500"
+                    - name: NNODES
+                      value: "1"
+                    - name: NPROC_PER_NODE
+                      value: "8"
+                    - name: MODULE
+                      value: llama3
+                    - name: CONFIG
+                      value: llama3_8b
+                    - name: LOG_RANK
+                      value: "0"
+                    - name: HF_ASSETS_PATH
+                      value: /workspace/assets/hf/Llama-3.1-8B
+                    - name: NCCL_SOCKET_IFNAME
+                      value: eth0
+                    - name: TORCH_NCCL_ASYNC_ERROR_HANDLING
+                      value: "1"
+                    - name: LD_LIBRARY_PATH
+                      value: /opt/host-nvidia/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib64:/usr/local/lib
+                  command:
+                    - bash
+                    - -lc
+                    - |
+                      set -euo pipefail
+
+                      mkdir -p /opt/host-nvidia/lib
+                      ln -sf /opt/host-usr-lib64/libcuda.so /opt/host-nvidia/lib/libcuda.so
+                      ln -sf /opt/host-usr-lib64/libcuda.so.1 /opt/host-nvidia/lib/libcuda.so.1
+                      ln -sf /opt/host-usr-lib64/libnvidia-ml.so.1 /opt/host-nvidia/lib/libnvidia-ml.so.1
+
+                      NODE_RANK="$(echo "${HOSTNAME}" | awk -F- '{print $(NF-1)}')"
+                      MASTER_ADDR="${JOBSET_NAME}-trainer-0-0.${JOBSET_NAME}"
+
+                      exec torchrun \
+                        --nnodes="${NNODES}" \
+                        --nproc_per_node="${NPROC_PER_NODE}" \
+                        --node_rank="${NODE_RANK}" \
+                        --rdzv_backend=c10d \
+                        --rdzv_endpoint="${MASTER_ADDR}:${MASTER_PORT}" \
+                        --local-ranks-filter "${LOG_RANK}" \
+                        --role rank \
+                        --tee 3 \
+                        -m torchtitan.train \
+                        --module "${MODULE}" \
+                        --config "${CONFIG}" \
+                        --hf_assets_path "${HF_ASSETS_PATH}" \
+                        --dump_folder /workspace/data \
+                        --checkpoint.folder checkpoints
+                  resources:
+                    requests:
+                      cpu: "64"
+                      memory: 512Gi
+                      ephemeral-storage: 16Gi
+                      nvidia.com/gpu: 8
+                    limits:
+                      cpu: "64"
+                      memory: 512Gi
+                      ephemeral-storage: 16Gi
+                      nvidia.com/gpu: 8
+                  volumeMounts:
+                    - name: torchtitan-data
+                      mountPath: /workspace
+                    - name: host-usr-lib64
+                      mountPath: /opt/host-usr-lib64
+                      readOnly: true
+                    - name: host-nvidia-lib
+                      mountPath: /opt/host-nvidia/lib
+                    - name: dshm
+                      mountPath: /dev/shm
+              volumes:
+                - name: torchtitan-data
+                  persistentVolumeClaim:
+                    claimName: torchtitan-oke-fss
+                - name: host-usr-lib64
+                  hostPath:
+                    path: /usr/lib64
+                    type: Directory
+                - name: host-nvidia-lib
+                  emptyDir: {}
+                - name: dshm
+                  emptyDir:
+                    medium: Memory
+                    sizeLimit: 16Gi
