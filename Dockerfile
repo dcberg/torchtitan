@@ -34,6 +34,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
+        openmpi-bin \
+        openssh-client \
+        openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Install only the runtime dependencies needed for the training image.

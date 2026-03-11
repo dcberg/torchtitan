@@ -1,0 +1,219 @@
+apiVersion: kubeflow.org/v2beta1
+kind: MPIJob
+metadata:
+  name: torchtitan-phx-a10
+  namespace: torchtitan-phx
+  labels:
+    kueue.x-k8s.io/queue-name: torchtitan-phx-a10-2
+spec:
+  slotsPerWorker: 2
+  sshAuthMountPath: /root/.ssh
+  launcherCreationPolicy: WaitForWorkersReady
+  mpiImplementation: OpenMPI
+  runPolicy:
+    cleanPodPolicy: None
+  mpiReplicaSpecs:
+    Launcher:
+      replicas: 1
+      restartPolicy: Never
+      template:
+        metadata:
+          labels:
+            app: torchtitan
+            torchtitan/role: launcher
+        spec:
+          priorityClassName: torchtitan-batch
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+          containers:
+            - name: launcher
+              image: phx.ocir.io/odx-mockcustomer/torchtitan:0.0.3
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: WORKER_REPLICAS
+                  value: "3"
+                - name: SLOTS_PER_WORKER
+                  value: "2"
+                - name: MASTER_PORT
+                  value: "29500"
+                - name: MODULE
+                  value: llama3
+                - name: CONFIG
+                  value: llama3_debugmodel
+                - name: LOG_RANK
+                  value: "0"
+                - name: HF_ASSETS_PATH
+                  value: /workspace/tokenizer
+                - name: NCCL_SOCKET_IFNAME
+                  value: eth0
+                - name: TORCH_NCCL_ASYNC_ERROR_HANDLING
+                  value: "1"
+                - name: LD_LIBRARY_PATH
+                  value: /opt/host-nvidia/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib64:/usr/local/lib
+              command:
+                - bash
+                - -lc
+                - |
+                  set -euo pipefail
+
+                  export MASTER_ADDR
+                  MASTER_ADDR="$(awk 'NR==1 {print $1}' /etc/mpi/hostfile)"
+                  TOTAL_PROCS="$((WORKER_REPLICAS * SLOTS_PER_WORKER))"
+                  export HOME=/run/mpi-home
+                  mkdir -p "${HOME}/.ssh" /run/mpi-bin
+                  cp /root/.ssh/id_rsa "${HOME}/.ssh/id_rsa"
+                  chmod 600 "${HOME}/.ssh/id_rsa"
+                  cat > "${HOME}/.ssh/config" <<'EOF'
+                  Host *
+                    StrictHostKeyChecking no
+                    UserKnownHostsFile /dev/null
+                    LogLevel ERROR
+                  EOF
+                  chmod 600 "${HOME}/.ssh/config"
+                  cat > /run/mpi-bin/ssh <<'EOF'
+                  #!/bin/sh
+                  exec /usr/bin/ssh -F /run/mpi-home/.ssh/config -i /run/mpi-home/.ssh/id_rsa "$@"
+                  EOF
+                  chmod 755 /run/mpi-bin/ssh
+                  export PATH="/run/mpi-bin:${PATH}"
+                  sleep 10
+
+                  exec mpirun \
+                    --allow-run-as-root \
+                    -np "${TOTAL_PROCS}" \
+                    --hostfile /etc/mpi/hostfile \
+                    -bind-to none \
+                    -map-by slot \
+                    -x HOME \
+                    -x MASTER_ADDR \
+                    -x MASTER_PORT \
+                    -x MODULE \
+                    -x CONFIG \
+                    -x LOG_RANK \
+                    -x HF_ASSETS_PATH \
+                    -x NCCL_SOCKET_IFNAME \
+                    -x TORCH_NCCL_ASYNC_ERROR_HANDLING \
+                    -x LD_LIBRARY_PATH \
+                    -x PATH \
+                    bash -lc '
+                      export RANK="${OMPI_COMM_WORLD_RANK}"
+                      export WORLD_SIZE="${OMPI_COMM_WORLD_SIZE}"
+                      export LOCAL_RANK="${OMPI_COMM_WORLD_LOCAL_RANK}"
+                      exec python -m torchtitan.train \
+                        --module "${MODULE}" \
+                        --config "${CONFIG}" \
+                        --dataloader.dataset c4 \
+                        --hf_assets_path "${HF_ASSETS_PATH}" \
+                        --dump_folder /workspace/data \
+                        --checkpoint.folder checkpoints
+                    '
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: 4Gi
+                  ephemeral-storage: 2Gi
+                limits:
+                  cpu: "2"
+                  memory: 4Gi
+                  ephemeral-storage: 2Gi
+    Worker:
+      replicas: 3
+      restartPolicy: Never
+      template:
+        metadata:
+          labels:
+            app: torchtitan
+            torchtitan/role: worker
+        spec:
+          priorityClassName: torchtitan-batch
+          nodeSelector:
+            oke.oraclecloud.com/pool.name: gpu-a10-2
+            node.kubernetes.io/instance-type: VM.GPU.A10.2
+          containers:
+            - name: worker
+              image: phx.ocir.io/odx-mockcustomer/torchtitan:0.0.3
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: LD_LIBRARY_PATH
+                  value: /opt/host-nvidia/lib:/usr/lib/x86_64-linux-gnu:/usr/local/lib64:/usr/local/lib
+              command:
+                - bash
+                - -lc
+                - |
+                  set -euo pipefail
+
+                  mkdir -p /opt/host-nvidia/lib
+                  ln -sf /opt/host-usr-lib64/libcuda.so /opt/host-nvidia/lib/libcuda.so
+                  ln -sf /opt/host-usr-lib64/libcuda.so.1 /opt/host-nvidia/lib/libcuda.so.1
+                  ln -sf /opt/host-usr-lib64/libnvidia-ml.so.1 /opt/host-nvidia/lib/libnvidia-ml.so.1
+                  export HOME=/run/mpi-home
+                  mkdir -p "${HOME}/.ssh" /run/mpi-bin
+                  cp /root/.ssh/id_rsa "${HOME}/.ssh/id_rsa"
+                  chmod 600 "${HOME}/.ssh/id_rsa"
+                  cat > "${HOME}/.ssh/config" <<'EOF'
+                  Host *
+                    StrictHostKeyChecking no
+                    UserKnownHostsFile /dev/null
+                    LogLevel ERROR
+                  EOF
+                  chmod 600 "${HOME}/.ssh/config"
+                  cat > /run/mpi-bin/ssh <<'EOF'
+                  #!/bin/sh
+                  exec /usr/bin/ssh -F /run/mpi-home/.ssh/config -i /run/mpi-home/.ssh/id_rsa "$@"
+                  EOF
+                  chmod 755 /run/mpi-bin/ssh
+                  export PATH="/run/mpi-bin:${PATH}"
+                  ssh-keygen -A
+                  mkdir -p /run/sshd-root/.ssh
+                  cp /root/.ssh/authorized_keys /run/sshd-root/.ssh/authorized_keys
+                  chmod 700 /run/sshd-root/.ssh
+                  chmod 600 /run/sshd-root/.ssh/authorized_keys
+                  mkdir -p /run/sshd
+                  exec /usr/sbin/sshd -De \
+                    -o AuthorizedKeysFile=/run/sshd-root/.ssh/authorized_keys \
+                    -o PermitRootLogin=yes \
+                    -o PasswordAuthentication=no \
+                    -o PubkeyAuthentication=yes
+              resources:
+                requests:
+                  cpu: "48"
+                  memory: 384Gi
+                  ephemeral-storage: 8Gi
+                  nvidia.com/gpu: 2
+                limits:
+                  cpu: "48"
+                  memory: 384Gi
+                  ephemeral-storage: 8Gi
+                  nvidia.com/gpu: 2
+              volumeMounts:
+                - name: torchtitan-data
+                  mountPath: /workspace/data
+                - name: host-usr-lib64
+                  mountPath: /opt/host-usr-lib64
+                  readOnly: true
+                - name: host-nvidia-lib
+                  mountPath: /opt/host-nvidia/lib
+                - name: dshm
+                  mountPath: /dev/shm
+                - name: tokenizer-assets
+                  mountPath: /workspace/tokenizer
+                  readOnly: true
+          volumes:
+            - name: torchtitan-data
+              persistentVolumeClaim:
+                claimName: torchtitan-oke-fss
+            - name: host-usr-lib64
+              hostPath:
+                path: /usr/lib64
+                type: Directory
+            - name: host-nvidia-lib
+              emptyDir: {}
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Gi
+            - name: tokenizer-assets
+              configMap:
+                name: torchtitan-test-tokenizer
