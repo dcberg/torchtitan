@@ -33,6 +33,24 @@ That PHX directory now contains two distinct paths:
 - Shared or pre-staged storage for tokenizer assets, datasets, and checkpoints.
 - An OKE File Storage Service CSI `StorageClass` for the shared PVC, such as a class backed by `fss.csi.oraclecloud.com`.
 
+## Install Kueue and JobSet
+
+If your cluster does not already have Kueue and JobSet, install them with Helm before applying the TorchTitan manifests:
+
+```bash
+helm install kueue oci://registry.k8s.io/kueue/charts/kueue \
+  --version=0.16.1 \
+  --namespace kueue-system \
+  --create-namespace \
+  --wait --timeout 300s
+
+helm install jobset oci://registry.k8s.io/jobset/charts/jobset \
+  --version=0.11.1 \
+  --namespace jobset-system \
+  --create-namespace \
+  --wait --timeout 300s
+```
+
 ## Queue setup
 
 The sample `LocalQueue` points to a placeholder cluster queue:
