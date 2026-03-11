@@ -1,0 +1,12 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fss-dyn-storage
+provisioner: fss.csi.oraclecloud.com
+parameters:
+  availabilityDomain: zkJl:PHX-AD-1
+  compartmentOcid: ocid1.compartment.oc1..aaaaaaaalxfqhknexcaycldcwnpxhktivomsoijtozyip7o3tbdb2bhdgh4a
+  mountTargetSubnetOcid: ocid1.subnet.oc1.phx.aaaaaaaapsobsclhu5exnhllrwjk4aft55ohlqmvjcra2ph3ze5l5irfqbta
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

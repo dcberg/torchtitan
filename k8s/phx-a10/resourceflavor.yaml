@@ -1,0 +1,8 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: phx-gpu-a10-2
+spec:
+  nodeLabels:
+    oke.oraclecloud.com/pool.name: gpu-a10-2
+    node.kubernetes.io/instance-type: VM.GPU.A10.2

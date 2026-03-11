@@ -12,6 +12,13 @@ The example manifests are in:
 - `k8s/torchtitan-kueue-jobset.yaml`
 - `k8s/torchtitan-oke-fss-pvc.yaml`
 
+A PHX-specific example for the `gpu-a10-2` OKE node pool is documented in `docs/kubernetes-phx-a10.md` with manifests in `k8s/phx-a10/`.
+
+That PHX directory now contains two distinct paths:
+
+- `torchtitan-jobset.yaml`: verified smoke-test job for the A10 pool
+- `torchtitan-jobset-llama3-8b.yaml`: suspended template for a larger GPU pool
+
 ## Why JobSet instead of StatefulSet
 
 `StatefulSet` can be admitted by Kueue, but it is a serving-oriented controller. For multi-node training jobs, `JobSet` is a better fit because it models a distributed batch workload directly and gives each worker a stable DNS name suitable for `torchrun` rendezvous.

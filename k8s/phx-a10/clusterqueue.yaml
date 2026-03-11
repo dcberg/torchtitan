@@ -1,0 +1,25 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: torchtitan-phx-a10-2
+spec:
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: torchtitan-phx
+  resourceGroups:
+    - coveredResources:
+        - cpu
+        - ephemeral-storage
+        - memory
+        - nvidia.com/gpu
+      flavors:
+        - name: phx-gpu-a10-2
+          resources:
+            - name: cpu
+              nominalQuota: "179019m"
+            - name: ephemeral-storage
+              nominalQuota: "102867900657"
+            - name: memory
+              nominalQuota: "1432813104Ki"
+            - name: nvidia.com/gpu
+              nominalQuota: "6"
